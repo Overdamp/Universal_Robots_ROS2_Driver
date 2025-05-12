@@ -331,50 +331,58 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # Spawn controllers
-    def controller_spawner(controllers, active=True):
+    def controller_spawner(name, active=True):
         inactive_flags = ["--inactive"] if not active else []
         return Node(
             package="controller_manager",
             executable="spawner",
             arguments=[
+                name,
                 "--controller-manager",
-                "/controller_manager",
+                "controller_manager",
                 "--controller-manager-timeout",
                 controller_spawner_timeout,
             ]
-            + inactive_flags
-            + controllers,
+            + inactive_flags,
         )
 
-    controllers_active = [
+    controller_spawner_names = [
         "joint_state_broadcaster",
         "io_and_status_controller",
         "speed_scaling_state_broadcaster",
         "force_torque_sensor_broadcaster",
-        "tcp_pose_broadcaster",
-        "ur_configuration_controller",
     ]
-    controllers_inactive = [
-        "scaled_joint_trajectory_controller",
-        "joint_trajectory_controller",
-        "forward_velocity_controller",
-        "forward_position_controller",
-        "force_mode_controller",
-        "passthrough_trajectory_controller",
-        "freedrive_mode_controller",
-        "tool_contact_controller",
-    ]
-    if activate_joint_controller.perform(context) == "true":
-        controllers_active.append(initial_joint_controller.perform(context))
-        controllers_inactive.remove(initial_joint_controller.perform(context))
+    controller_spawner_inactive_names = ["forward_position_controller"]
 
-    if use_fake_hardware.perform(context) == "true":
-        controllers_active.remove("tcp_pose_broadcaster")
-
-    controller_spawners = [
-        controller_spawner(controllers_active),
-        controller_spawner(controllers_inactive, active=False),
+    controller_spawners = [controller_spawner(name) for name in controller_spawner_names] + [
+        controller_spawner(name, active=False) for name in controller_spawner_inactive_names
     ]
+    # There may be other controllers of the joints, but this is the initially-started one
+    initial_joint_controller_spawner_started = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            initial_joint_controller,
+            "-c",
+            "controller_manager",
+            "--controller-manager-timeout",
+            controller_spawner_timeout,
+        ],
+        condition=IfCondition(activate_joint_controller),
+    )
+    initial_joint_controller_spawner_stopped = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            initial_joint_controller,
+            "-c",
+            "controller_manager",
+            "--controller-manager-timeout",
+            controller_spawner_timeout,
+            "--inactive",
+        ],
+        condition=UnlessCondition(activate_joint_controller),
+    )
 
     nodes_to_start = [
         control_node,
@@ -385,7 +393,9 @@ def launch_setup(context, *args, **kwargs):
         controller_stopper_node,
         urscript_interface,
         robot_state_publisher_node,
-        rviz_node,
+        # rviz_node,
+        initial_joint_controller_spawner_stopped,
+        initial_joint_controller_spawner_started,
     ] + controller_spawners
 
     return nodes_to_start
